@@ -3,6 +3,9 @@ require 'active_support/core_ext/class/attribute_accessors'
 
 module Sequenced
   module ActsAsSequenced
+    mattr_accessor :redis
+    @@redis = nil
+
     def self.included(base)
       base.extend ClassMethods
     end
@@ -41,7 +44,23 @@ module Sequenced
 
     module InstanceMethods
       def set_sequential_id
+        scope_value = if self.class.base_class.sequenced_options[:scope]
+          if self.class.base_class.sequenced_options[:scope].kind_of?(Array)
+            self.class.base_class.sequenced_options[:scope].collect do |s|
+              self.public_send(s)
+            end.join(',')
+          else
+            self.public_send(self.class.base_class.sequenced_options[:scope])
+          end
+        else
+          nil
+        end
+        lock_key = "#{self.class.to_s}:#{self.class.base_class.sequenced_options[:scope]}=#{scope_value}:#{self.class.base_class.sequenced_options[:column] || 'sequential_id'}"
+        while redis.get(lock_key);end
+        redis.set(lock_key, "1")
+        redis.expire(lock_key, 30)
         Sequenced::Generator.new(self, self.class.base_class.sequenced_options).set
+        redis.del(lock_key)
       end
     end
   end
